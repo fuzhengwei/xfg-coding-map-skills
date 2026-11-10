@@ -1327,8 +1327,8 @@ window.addEventListener('resize', () => {
   if (activeTree) drawLinks();
 });
 document.querySelectorAll('.diagram-wrap').forEach(w => w.addEventListener('scroll', () => { if (activeTree) drawLinks(); }));
-document.getElementById('docPanel').addEventListener('scroll', () => { if (activeTree) drawLinks(); });
-document.getElementById('treePanel').addEventListener('scroll', () => { if (activeTree) drawLinks(); });
+document.getElementById('docs').addEventListener('scroll', () => { if (activeTree) drawLinks(); });
+document.getElementById('tree').addEventListener('scroll', () => { if (activeTree) drawLinks(); });
 document.getElementById('treePanel').addEventListener('mouseleave', () => { if (!pinned) setActive(null, false); });
 
 /* ══════════════ 主线导航条引擎（数据 TOUR 在文件头数据区） ══════════════ */

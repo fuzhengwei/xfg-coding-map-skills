@@ -1,7 +1,7 @@
 ---
 name: xfg-coding-map-skills
 description: "代码地图（Code Map）生成技能：把一次开发迭代、一个需求设计或一个教学章节，生成为一张自包含的可交互三栏 HTML 全景图（IDEA 风格工程树 ⇄ Mermaid 全景/时序/流程图 ⇄ 变更说明卡，三方点击联动 + SVG 连线 + 主线导览）。当用户要求生成代码地图、全景图、开发导览图、迭代对比图、需求蓝图、PR 讲解图、架构总览图，或想'跟着流程走实现一个需求'、'讲清楚这次改了什么'时使用。"
-version: 1.0.0
+version: 1.1.0
 author: xiaofuge
 license: MIT
 agent_created: true
@@ -26,7 +26,16 @@ triggers:
 
 把"一次开发迭代 / 一个需求 / 一个教学章节"提炼为一张**自包含的可交互 HTML**：左侧 IDEA 风格工程树（可搜索、折叠、状态徽标），中间 Mermaid 图（全景/时序/流程，五色变更标记），右侧变更说明卡；三方点击联动画连线，顶部"跟着流程走"导览条按开发叙事走完整个主题。
 
-**核心资产**：`assets/code-map-template.html` 是渲染引擎 + 示例数据（示例即质量基准）。生成 = 换数据，不改引擎。
+**核心资产**：`assets/code-map-template.html` 是渲染引擎 + 示例数据（示例即质量基准）。生成 = 换数据，不改引擎。数据可写成 JSON 契约交给 `build-map.mjs` 自动生成，也可手工替换数据区。
+
+## 事实纪律（先于画图）
+
+画图前先重建事实基线，写进 MAP_META.subtitle 与说明卡：
+
+1. **记录真实基线**：仓库分支、HEAD、当日日期。改前依据是**当前工作区源码**（含未提交修改），旧设计基线不同时用 `git show <提交>:<路径>` 对照，不切换用户分支。
+2. **三种行为状态分开写**：已核对的当前行为 / 评审后的建议行为 / 已实施且验证过的行为。图是 S3 蓝图（目标态）时要明确标注"改后为建议实现"，不能把建议写成已生效。
+3. **改动描述要可复核**："优化校验"不可评审；"`ParamHandler#handle` 从只读旧字段改为解析有效规则，非法值走现有参数错误"才可评审。仅需回归的类不写成修改项。
+4. **编号稳定**：迭代更新已有图时保留原编号/原 doc id，新增接续，不因排版重排；同一张图只讲一个主题。
 
 ## 工作流
 
@@ -44,21 +53,32 @@ triggers:
 
 ### 第 2 步：收集素材
 
-- 迭代/PR 对比：运行 `scripts/extract-diff.sh <repo> <baseline-ref> [current-ref]`，按插入行数倒序深入阅读变更文件；统计数字填 header stats。
+- 迭代/PR 对比：运行 `scripts/extract-diff.sh <repo> <baseline-ref> [current-ref]`，按插入行数倒序深入阅读变更文件；统计数字填 `meta.stats`。
 - 教学章节：读该章节的 commit 范围与已有教程文档。
 - 需求蓝图：读需求描述 + 现有代码结构（模块、既有可复用类），设计目标态的类清单与交互。
 - Onboarding：遍历项目顶层结构。
 
-### 第 3 步：构建数据并生成
+### 第 3 步：构建数据并生成（两条路径，二选一）
 
-1. 建输出目录（默认 `<用户项目>/docs/code-map/<slug>/`，用户指定则从其指定），复制：
-   - `assets/code-map-template.html` → `<slug>.html`
-   - `assets/vendor/` → 同级 `vendor/`（离线渲染必需）
-2. 按 `references/data-spec.md` 的字段规范，**整体替换**模板中 `MAP-DATA-START` 到 `MAP-DATA-END ═` 之间的数据区：`OVER_SRC` / `SEQ_SRC` / `FLOW_SRC` 三个 mermaid 图源、`TREE`（工程树）、`DOCS`（说明卡）、`TOUR`（导览站点）。
-3. 替换 `MAP-META` 注释标注的元信息（title / h1 / 副标题 / stats / 包名 / 右栏标题 / 欢迎语）。**localStorage key 必须换新**（`<slug>-welcomed`）。
-4. 场景需要更少页签时：删除对应 `.tab`、`#wrap-x`、`#box-x`、`#src-x` 元素和数据区对应 `X_SRC` 常量，引擎自动适配。
+**路径 A（推荐）：JSON 契约 + 构建脚本**。把数据写成 JSON（结构见 `references/data-spec.md`「JSON 数据契约」，完整示例 `assets/example-map.json`），然后：
 
-### 第 4 步：校验（必须通过）
+```bash
+node <本技能目录>/scripts/build-map.mjs --data <map-data.json> --out <输出目录>
+```
+
+脚本做契约校验 → 替换模板 MAP-DATA 区 → 裁剪页签 → 确保 vendor 就位 → 自动运行 validate-map.js。产物已存在时拒绝覆盖，确认重生成加 `--force`；退出码非 0 不得交付。
+
+**路径 B：手工替换数据区**。建输出目录（默认 `<用户项目>/docs/code-map/<slug>/`），复制 `assets/code-map-template.html` → `<slug>.html` 和 `assets/vendor/` → 同级 `vendor/`，然后按 `references/data-spec.md` 整体替换 `MAP-DATA-START` 到 `MAP-DATA-END ═` 之间的 **7 个数据结构**：`MAP_META`（标题/stats/欢迎层/slug 等全部元信息）、`OVER_SRC` / `SEQ_SRC` / `FLOW_SRC`、`TREE`、`DOCS`、`TOUR`。
+
+两条路径共同约束：
+
+- **MAP_META.slug 必须唯一**（localStorage 欢迎层 key 由它派生，重复则老访客看不到新图欢迎层）。
+- 场景需要更少页签时（路径 B）：删除对应 `.tab`、`#wrap-x`、`#box-x`、`#src-x` 元素和数据区对应 `X_SRC` 常量；路径 A 用 JSON 的 `tabs` 字段声明保留页签即可。
+- 引擎区一行不改。
+
+### 第 4 步：校验（必须通过，两层）
+
+**第一层·静态校验**：
 
 ```bash
 node <本技能目录>/scripts/validate-map.js <输出的html>
@@ -66,15 +86,28 @@ node <本技能目录>/scripts/validate-map.js <输出的html>
 
 - **0 错误才可交付**；错误最常见的是 kw 在图源码中找不到（联动断链）——修图源标签或改 kw。
 - 警告逐条评估：孤儿说明卡、无 kw 的联动节点、TOUR 站数异常。
-- 有浏览器能力时打开页面自查一轮；没有则交付时说明已通过静态校验。
+- 校验器还会拦截：时序图 alt/loop 块不配对、消息引用未声明参与者、flowchart subgraph 未闭合、MAP_META/徽标取值非法。
+
+**第二层·真渲染验收**（有 Chrome + Node 22+ 时必须执行；脚本用 CDP，无需 Playwright）：
+
+```bash
+node <本技能目录>/scripts/render-map.mjs --html <输出的html>
+```
+
+脚本真渲染三张图、走一遍页签切换/三方联动/说明卡筛选/树搜索/导览翻站/滚动跟随连线重绘，检查无外部请求、无运行时异常，并导出 `<slug>-<页签>.svg`、`<slug>-全景.png`、`<slug>-联动预览.png`、`<slug>-渲染验证.json`。**渲染验证 success=false 或未运行时，不得声称 PNG/SVG 已生成**。两者都没有浏览器能力时，交付时说明仅通过静态校验。
 
 ### 第 5 步：交付
 
-`present_files` 打开 HTML，并附三行使用说明：顶部导航条跟流程走 / 任意一栏点击三方联动 / 左树支持搜索。若为 S3 蓝图场景，说明"按导航条 1→N 顺序即开发顺序"。
+`present_files` 打开 HTML（渲染验收产物一并交付），并附三行使用说明：顶部导航条跟流程走 / 任意一栏点击三方联动 / 左树支持搜索。若为 S3 蓝图场景，说明"按导航条 1→N 顺序即开发顺序"及"图为目标态、非已实施"。
+
+## 迭代维护
+
+用户继续迭代需求、代码或图时：先核对基线变化 → 更新唯一数据源（JSON 或数据区）→ 重新生成 → 两层校验。保留未变编号，不积累互相矛盾的"最新版"。代码已实施后，以实际代码与运行证据更新说明卡，不再写"建议"。
 
 ## 质量红线
 
-1. 引擎区（数据区之外的所有代码）一行不改。
+1. 引擎区（数据区之外的所有代码）一行不改；元信息一律走 MAP_META。
 2. 五色 classDef 体系不得自创颜色；新增节点标签带 🆕。
 3. 树里每个 doc 节点都能联动高亮图节点；TOUR 单独看也构成完整叙事。
 4. 一张图一个主题；两个不相干需求拆成两张图。
+5. 每张新图 slug 唯一；静态校验 + 真渲染验收都通过才交付，渲染失败不许谎报产物。

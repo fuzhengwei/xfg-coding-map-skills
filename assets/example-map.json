@@ -1,0 +1,692 @@
+{
+  "meta": {
+    "title": "xfg-2-1 开发串联全景图 · 对比基线 xfg-1-3",
+    "h1": "xfg-2-1 开发串联全景图",
+    "subtitle": "基线 <b>xfg-1-3</b><i>→</i>本节 <b>xfg-2-1</b> · LLM 端口-适配器链路",
+    "stats": [
+      {
+        "num": "20",
+        "lbl": "新增文件"
+      },
+      {
+        "num": "4",
+        "lbl": "调整文件",
+        "amber": true
+      },
+      {
+        "num": "+3278",
+        "lbl": "/ -1 行"
+      }
+    ],
+    "project": "cn.xiaofuge.deepseek.harness",
+    "docCap": "变更说明 · vs xfg-1-3",
+    "slug": "xfg-2-1",
+    "welcomeSub": "基线 <b>xfg-1-3</b> → 本节 <b>xfg-2-1</b> · LLM 端口-适配器链路 · 新增 20 文件 / +3278 行",
+    "welcomeItems": [
+      {
+        "icon": "🧭",
+        "html": "点上方<b>「跟着流程走」</b>导航条，8 站从装配走到组装，每站自动定位联动"
+      },
+      {
+        "icon": "🔍",
+        "html": "左侧工程树支持<b>搜索过滤</b>，像 IDEA 一样展开 / 折叠 / 双击"
+      },
+      {
+        "icon": "🔗",
+        "html": "自由探索：树 / 图 / 右侧说明卡<b>三方点击联动</b>，连线直达"
+      }
+    ]
+  },
+  "tabs": [
+    "over",
+    "seq",
+    "flow"
+  ],
+  "over": "flowchart LR\n    classDef modc fill:#f4f8ff,stroke:#8fb0e8,stroke-width:1.6px,color:#1c3d6e\n    classDef newc fill:#e6f6ec,stroke:#17a45f,stroke-width:2px,color:#0b5c3a\n    classDef oldc fill:#f1f3f6,stroke:#9aa3af,stroke-width:1.2px,stroke-dasharray:5 3,color:#5a6068\n    classDef extc fill:#eaf1fe,stroke:#3574f0,stroke-width:1.6px,color:#1c3257\n\n    subgraph APP[\"🖥️ app · 验收入口\"]\n        direction TB\n        CLI[\"LlmCliProbe main()<br/>装配 + 一次非流式对话 🆕\"]\n        APPJ[\"Application / ConfigProbeRunner<br/>仅 Javadoc 注释增强\"]\n    end\n    subgraph DOM[\"⚙️ domain · 纯领域（零基础设施依赖）\"]\n        direction TB\n        SVC[\"LlmGenerationService<br/>流→阻塞翻译官 🆕\"]\n        ASM[\"BlockAssembler<br/>chunk 拼图手 🆕\"]\n        PORTIF[\"🔌 ILlmRuntimePort 端口<br/>stream() · registerAdapter()<br/>listProviders() 🆕\"]\n        ADPSPI[\"LlmAdapter SPI<br/>适配器契约 · stream/listModels<br/>resolveModel/retryPolicy 🆕\"]\n        VAL[\"7 个值对象<br/>StreamChunk · GenerateOptions<br/>ResolvedRetryPolicy… 🆕\"]\n        URI[\"OpenAiCompatibleUriResolver<br/>端点拼接 🆕\"]\n        BASE[\"Message / TextBlock…<br/>1-3 领域模型基线\"]\n    end\n    subgraph INF[\"🔌 infrastructure · 厂商适配\"]\n        direction TB\n        PORTIMPL[\"InMemoryLlmRuntimePort<br/>路由器 + 重试包装 🆕\"]\n        ADP[\"DeepSeekAdapter<br/>OpenAI 兼容 · 821 行 🆕\"]\n    end\n    UP[(\"☁️ WaLiAPI 网关<br/>glm-5.3-flash\")]\n\n    CLI --> SVC\n    SVC --> PORTIF\n    PORTIF -. 契约由 ADPSPI 声明 .-> ADPSPI\n    PORTIF -. 实现 .-> PORTIMPL\n    PORTIMPL --> ADP\n    ADP --> URI\n    ADP --> UP\n    SVC --> ASM\n    ASM -. 消费 .-> BASE\n    VAL -. 支撑全部事件 .- PORTIF\n\n    class CLI,PORTIF,ADPSPI,VAL,URI,PORTIMPL,ADP,SVC,ASM newc\n    class APPJ oldc\n    class BASE oldc\n    class UP extc",
+  "seq": "sequenceDiagram\n    autonumber\n    participant CLI as LlmCliProbe<br/>main() 🆕\n    participant SVC as LlmGenerationService<br/>generate() 🆕\n    participant PORT as InMemoryLlmRuntimePort<br/>stream() 🆕\n    participant ADP as DeepSeekAdapter<br/>stream() 🆕\n    participant RES as OpenAiCompatible<br/>UriResolver 🆕\n    participant UP as WaLiAPI 网关<br/>/v1/chat/completions\n    participant ASM as BlockAssembler<br/>push()/message() 🆕\n\n    Note over CLI,PORT: ① 装配阶段（纯 new，后续章节改 Spring 装配）\n    CLI->>PORT: new 端口 + registerAdapter(\"deepseek\", adapter)\n    CLI->>SVC: new LlmGenerationService(runtimePort)\n\n    Note over CLI,ASM: ② 一次非流式对话 = 流式订阅 + chunk 组装\n    CLI->>SVC: generate(GenerateOptions)，返回 CompletableFuture\n    SVC->>PORT: stream(options)\n    PORT->>ADP: 路由 provider=\"deepseek\" → adapter.stream(options)\n    ADP->>ADP: serializeRequest()：领域消息 → JSON\n    ADP->>RES: resolveChatCompletionsUri(baseUrl)\n    RES-->>ADP: http://127.0.0.1:8777/v1/chat/completions\n    ADP->>UP: POST（Accept: text/event-stream）\n    loop SSE data: 分片\n        UP-->>ADP: delta { reasoning / content / tool_calls }\n        ADP-->>SVC: publish StreamChunk（BlockStart → *Delta）\n        SVC->>ASM: push(chunk) 逐条累积\n    end\n    UP-->>ADP: data: [DONE]\n    ADP-->>SVC: BlockEnd×n → Usage → Finish\n    SVC->>ASM: message(ModelMessageSource)\n    ASM-->>SVC: Message(assistant)\n    SVC-->>CLI: Future 完成 → join()\n    Note over CLI: 拼接 TextBlock → 打印 answer\n    Note over ADP,UP: ⚠️ 异常/空流：publishError → Finish(Error)；空流走 doNonStreamFallback 兜底",
+  "flow": "flowchart TB\n    classDef newc fill:#e6f6ec,stroke:#17a45f,stroke-width:2px,color:#0b5c3a\n    classDef oldc fill:#f1f3f6,stroke:#9aa3af,stroke-width:1.2px,stroke-dasharray:5 3,color:#5a6068\n    classDef warnc fill:#fff4e0,stroke:#e6a23c,stroke-width:1.6px,color:#7a4101\n    classDef errc fill:#fdecec,stroke:#e5484d,stroke-width:1.8px,color:#b3232a\n    classDef extc fill:#eaf1fe,stroke:#3574f0,stroke-width:1.6px,color:#1c3257\n\n    CLI[\"🖥️ LlmCliProbe.main() 🆕<br/>读环境变量 → 装配 → 提问 → join() 打印\"]\n    SVC[\"⚙️ LlmGenerationService.generate() 🆕<br/>subscribe 流 → CountDownLatch → 阻塞翻译\"]\n    ASM[\"🧩 BlockAssembler 🆕<br/>push() 累积 → message() 组装 Message\"]\n    PORTIF[\"🔌 ILlmRuntimePort «Port» 🆕<br/>领域层唯一插座：stream()\"]\n    PORT[\"InMemoryLlmRuntimePort.stream() 🆕<br/>路由表 provider→adapter + 重试包装\"]\n    ADP[\"DeepSeekAdapter.stream() 🆕<br/>起独立线程，立即返回 Publisher\"]\n    DOSTREAM[\"doStream() 🆕<br/>解析生效 apiKey/baseUrl（请求级覆盖全局）\"]\n    SERIAL[\"serializeRequest() 🆕<br/>领域消息 → OpenAI chat/completions JSON\"]\n    RESOLVE[\"OpenAiCompatibleUriResolver 🆕<br/>resolveChatCompletionsUri(baseUrl)\"]\n    HTTP[\"POST /v1/chat/completions<br/>Accept: text/event-stream\"]\n    UP[(\"☁️ WaLiAPI 网关<br/>glm-5.3-flash · OpenAI 兼容\")]\n    STATUS{\"HTTP 2xx ?\"}\n    SSE{\"translateSse() 🆕<br/>首字节 10s 内到达 ?\"}\n    PARSE[\"逐行解析 data: 分片 🆕<br/>reasoning_content → ReasoningDelta<br/>content → TextDelta<br/>tool_calls → ToolCallDelta（wire→block 映射）\"]\n    DONE{\"读到 data: [DONE] ?\"}\n    CLOSE[\"收尾 🆕<br/>推理兜底合成文本块 → 关闭全部块 BlockEnd<br/>→ Usage → Finish\"]\n    FALLBACK[\"doNonStreamFallback() 🆕<br/>改发 stream=false，完整响应<br/>拆成同样的事件流（下游无感）\"]\n    ERRP[\"publishError() 🆕<br/>任意异常 → Finish(Error)<br/>401/403→AUTH · 429→RATE_LIMIT · 5xx→SERVER\"]\n\n    CLI --> SVC\n    SVC -->|\"subscribe\"| PORTIF\n    PORTIF -. 实现 .-> PORT\n    PORT --> ADP\n    ADP --> DOSTREAM --> SERIAL\n    SERIAL --> RESOLVE --> HTTP --> UP\n    UP --> STATUS\n    STATUS -->|\"4xx / 5xx\"| ERRP\n    STATUS -->|\"200\"| SSE\n    SSE -->|\"超时 / 空流\"| FALLBACK\n    FALLBACK --> CLOSE\n    SSE -->|\"到达\"| PARSE\n    PARSE --> DONE\n    DONE -->|\"否，继续读\"| PARSE\n    DONE -->|\"是\"| CLOSE\n    ERRP --> CLOSE\n    CLOSE -->|\"StreamChunk 事件流回流\"| SVC\n    SVC --> ASM\n    ASM -->|\"Message(assistant)\"| CLI\n\n    class CLI,SVC,ASM,PORTIF,PORT,ADP,DOSTREAM,SERIAL,RESOLVE,SSE,PARSE,CLOSE,FALLBACK newc\n    class UP extc\n    class STATUS,DONE oldc\n    class HTTP warnc\n    class ERRP errc",
+  "tree": [
+    {
+      "t": "module",
+      "n": "deepseek-harness-java-app",
+      "children": [
+        {
+          "t": "pkg",
+          "n": "cn.xiaofuge.deepseek.harness.app",
+          "children": [
+            {
+              "t": "class",
+              "n": "Application",
+              "b": "mod",
+              "doc": "app-comment",
+              "kw": [
+                "Application"
+              ]
+            },
+            {
+              "t": "class",
+              "n": "ConfigProbeRunner",
+              "b": "mod",
+              "doc": "app-comment",
+              "kw": [
+                "ConfigProbeRunner"
+              ]
+            },
+            {
+              "t": "class",
+              "n": "LlmCliProbe",
+              "b": "new",
+              "doc": "cli",
+              "kw": [
+                "LlmCliProbe"
+              ],
+              "children": [
+                {
+                  "t": "method",
+                  "n": "main()：装配 + 一次非流式对话",
+                  "b": "new",
+                  "doc": "cli",
+                  "kw": [
+                    "LlmCliProbe",
+                    "join()"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "t": "module",
+      "n": "deepseek-harness-java-domain",
+      "children": [
+        {
+          "t": "pkg",
+          "n": "…domain.model（1-3 已有基线）",
+          "children": [
+            {
+              "t": "class",
+              "n": "Message / MessageSource",
+              "b": "old",
+              "doc": "baseline",
+              "kw": [
+                "Message(assistant)",
+                "ModelMessageSource"
+              ]
+            },
+            {
+              "t": "class",
+              "n": "TextBlock / ReasoningBlock / ToolCallBlock…",
+              "b": "old",
+              "doc": "baseline",
+              "kw": [
+                "TextBlock"
+              ]
+            }
+          ]
+        },
+        {
+          "t": "pkg",
+          "n": "…domain.llm.adapter 🆕",
+          "children": [
+            {
+              "t": "iface",
+              "n": "LlmAdapter «SPI 适配器契约»",
+              "b": "new",
+              "doc": "spi",
+              "kw": [
+                "LlmAdapter"
+              ],
+              "children": [
+                {
+                  "t": "method",
+                  "n": "stream()：领域事件 ⇄ 厂商协议",
+                  "b": "new",
+                  "doc": "spi",
+                  "kw": [
+                    "LlmAdapter"
+                  ]
+                },
+                {
+                  "t": "method",
+                  "n": "listModels() / resolveModel() / retryPolicy()",
+                  "b": "new",
+                  "doc": "spi",
+                  "kw": [
+                    "listModels",
+                    "resolveModel",
+                    "retryPolicy"
+                  ]
+                }
+              ]
+            },
+            {
+              "t": "class",
+              "n": "ResolvedRetryPolicy",
+              "b": "new",
+              "doc": "valobj",
+              "kw": [
+                "ResolvedRetryPolicy",
+                "retryPolicy"
+              ]
+            }
+          ]
+        },
+        {
+          "t": "pkg",
+          "n": "…domain.llm.adapter.port 🆕",
+          "children": [
+            {
+              "t": "iface",
+              "n": "ILlmRuntimePort «Port 运行时插座»",
+              "b": "new",
+              "doc": "portif",
+              "kw": [
+                "ILlmRuntimePort"
+              ],
+              "children": [
+                {
+                  "t": "method",
+                  "n": "stream(options)：流式调用唯一入口",
+                  "b": "new",
+                  "doc": "portif",
+                  "kw": [
+                    "stream(options)"
+                  ]
+                },
+                {
+                  "t": "method",
+                  "n": "registerAdapter() / listProviders()",
+                  "b": "new",
+                  "doc": "portif",
+                  "kw": [
+                    "registerAdapter",
+                    "listProviders"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "pkg",
+          "n": "…domain.llm.model.valobj 🆕（7 个值对象）",
+          "children": [
+            {
+              "t": "class",
+              "n": "StreamChunk（8 种流式事件）",
+              "b": "new",
+              "doc": "valobj",
+              "kw": [
+                "StreamChunk"
+              ]
+            },
+            {
+              "t": "class",
+              "n": "GenerateOptions（统一生成请求）",
+              "b": "new",
+              "doc": "valobj",
+              "kw": [
+                "GenerateOptions"
+              ]
+            },
+            {
+              "t": "class",
+              "n": "FinishReason / TokenUsage / LlmFailure / LlmErrorCodes…",
+              "b": "new",
+              "doc": "valobj",
+              "kw": [
+                "Finish",
+                "Usage",
+                "Finish(Error)",
+                "AUTH"
+              ]
+            }
+          ]
+        },
+        {
+          "t": "pkg",
+          "n": "…domain.llm.service 🆕",
+          "children": [
+            {
+              "t": "class",
+              "n": "LlmGenerationService «流→阻塞翻译官»",
+              "b": "new",
+              "doc": "svc",
+              "kw": [
+                "LlmGenerationService"
+              ],
+              "children": [
+                {
+                  "t": "method",
+                  "n": "generate()：订阅流 + Latch + Future",
+                  "b": "new",
+                  "doc": "svc",
+                  "kw": [
+                    "generate(GenerateOptions)",
+                    "CompletableFuture"
+                  ]
+                }
+              ]
+            },
+            {
+              "t": "class",
+              "n": "BlockAssembler «chunk 拼图手»",
+              "b": "new",
+              "doc": "asm",
+              "kw": [
+                "BlockAssembler"
+              ],
+              "children": [
+                {
+                  "t": "method",
+                  "n": "push()：8 种事件分发累积",
+                  "b": "new",
+                  "doc": "asm",
+                  "kw": [
+                    "push(chunk)",
+                    "push()"
+                  ]
+                },
+                {
+                  "t": "method",
+                  "n": "ensure() / assemble() / blocks() / message()",
+                  "b": "new",
+                  "doc": "asm",
+                  "kw": [
+                    "message(ModelMessageSource",
+                    "message() 组装"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "pkg",
+          "n": "…domain.channel.service 🆕",
+          "children": [
+            {
+              "t": "class",
+              "n": "OpenAiCompatibleUriResolver",
+              "b": "new",
+              "doc": "uri",
+              "kw": [
+                "OpenAiCompatible",
+                "UriResolver"
+              ],
+              "children": [
+                {
+                  "t": "method",
+                  "n": "resolveChatCompletionsUri() / resolveModelsUri()",
+                  "b": "new",
+                  "doc": "uri",
+                  "kw": [
+                    "resolveChatCompletionsUri"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "t": "module",
+      "n": "deepseek-harness-java-infrastructure",
+      "children": [
+        {
+          "t": "pkg",
+          "n": "…infrastructure.adapter.llm 🆕",
+          "children": [
+            {
+              "t": "class",
+              "n": "InMemoryLlmRuntimePort «端口实现·路由器»",
+              "b": "new",
+              "doc": "portimpl",
+              "kw": [
+                "InMemoryLlmRuntimePort"
+              ],
+              "children": [
+                {
+                  "t": "method",
+                  "n": "registerAdapter()：写入 provider→adapter 路由表",
+                  "b": "new",
+                  "doc": "portimpl",
+                  "kw": [
+                    "registerAdapter"
+                  ]
+                },
+                {
+                  "t": "method",
+                  "n": "stream()：路由 + 重试包装（Retry 事件）",
+                  "b": "new",
+                  "doc": "portimpl",
+                  "kw": [
+                    "重试包装",
+                    "路由 provider=\"deepseek\""
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "pkg",
+          "n": "…infrastructure.adapter.llm.deepseek 🆕",
+          "children": [
+            {
+              "t": "class",
+              "n": "DeepSeekAdapter «OpenAI 兼容适配器·821 行»",
+              "b": "new",
+              "doc": "adapter",
+              "kw": [
+                "DeepSeekAdapter"
+              ],
+              "children": [
+                {
+                  "t": "method",
+                  "n": "stream()：起线程异步返回 Publisher",
+                  "b": "new",
+                  "doc": "adapter",
+                  "kw": [
+                    "DeepSeekAdapter.stream()",
+                    "起独立线程"
+                  ]
+                },
+                {
+                  "t": "method",
+                  "n": "doStream()：发请求主流程",
+                  "b": "new",
+                  "doc": "dostream",
+                  "kw": [
+                    "doStream()"
+                  ]
+                },
+                {
+                  "t": "method",
+                  "n": "serializeRequest()：领域消息 → JSON 请求体",
+                  "b": "new",
+                  "doc": "serialize",
+                  "kw": [
+                    "serializeRequest"
+                  ]
+                },
+                {
+                  "t": "method",
+                  "n": "translateSse()：SSE 逐行翻译（核心）",
+                  "b": "new",
+                  "doc": "sse",
+                  "kw": [
+                    "translateSse",
+                    "data: 分片",
+                    "data: [DONE]"
+                  ]
+                },
+                {
+                  "t": "method",
+                  "n": "doNonStreamFallback()：空流兜底",
+                  "b": "new",
+                  "doc": "fallback",
+                  "kw": [
+                    "doNonStreamFallback",
+                    "兜底"
+                  ]
+                },
+                {
+                  "t": "method",
+                  "n": "publishError() / httpErrorCode() / mapFinishReason() / mapUsage()",
+                  "b": "new",
+                  "doc": "err",
+                  "kw": [
+                    "publishError",
+                    "Finish(Error)",
+                    "AUTH"
+                  ]
+                }
+              ]
+            },
+            {
+              "t": "class",
+              "n": "DeepSeekAdapterOptions / DirectSeekCatalogModel",
+              "b": "new",
+              "doc": "opts",
+              "kw": [
+                "options",
+                "glm-5.3-flash"
+              ]
+            },
+            {
+              "t": "class",
+              "n": "InMemoryLlmRuntimePortTest",
+              "b": "new",
+              "doc": "tests",
+              "kw": [
+                "InMemoryLlmRuntimePort"
+              ]
+            },
+            {
+              "t": "class",
+              "n": "DeepSeekAdapterMinimalTest",
+              "b": "new",
+              "doc": "tests",
+              "kw": [
+                "DeepSeekAdapter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "t": "module",
+      "n": "pom.xml（domain / infrastructure）",
+      "b": "mod",
+      "doc": "dep",
+      "kw": [
+        "chat/completions"
+      ]
+    }
+  ],
+  "docs": [
+    {
+      "id": "cli",
+      "b": "新增",
+      "t": "LlmCliProbe — CLI 验收入口",
+      "f": "app/…/LlmCliProbe.java · +158 行 · 全新",
+      "body": "\n    <ul>\n      <li><b>本节唯一可跑入口</b>：一条最小命令行链路验证 Port / Adapter / 领域服务 / 配置驱动 4 件事。</li>\n      <li>配置读取：<code>DEEPSEEK_API_KEY / BASE_URL / MODEL</code> 环境变量优先，回落类内常量（WaLiAPI 网关 <code>127.0.0.1:8777</code> + <code>glm-5.3-flash</code>）。</li>\n      <li>装配链路：<code>new InMemoryLlmRuntimePort()</code> → <code>DeepSeekAdapterOptions(...)</code> → <code>registerAdapter(\"deepseek\", new DeepSeekAdapter(options, new ObjectMapper()))</code>。</li>\n      <li>发起对话：问题包装成 <code>GenerateOptions</code>（provider=\"deepseek\"）→ <code>service.generate(genOptions).join()</code> 阻塞拿完整 Message。</li>\n      <li>收尾：遍历 <code>answer.content()</code> 拼接 <code>TextBlock</code> 打印；未配 Key 时只验证装配并跳过真实调用，不阻塞构建。</li>\n    </ul>"
+    },
+    {
+      "id": "portif",
+      "b": "新增",
+      "t": "ILlmRuntimePort — 运行时端口（领域插座）",
+      "f": "domain/…/llm/adapter/port/ILlmRuntimePort.java · +98 行",
+      "body": "\n    <ul>\n      <li><b>六边形架构的\"端口\"</b>：领域层只面向本接口编程，不 import 任何基础设施类型。</li>\n      <li>8 个方法：<code>registerAdapter / unregisterAdapter / hasAdapter / listProviders / listModels / resolveModel / stream</code>。</li>\n      <li>核心契约 <code>stream(options)</code>：按 <code>options.provider()</code> 路由适配器，返回 <code>Flow.Publisher&lt;StreamChunk&gt;</code>；<b>路由失败也返回只含 Finish(Error) 的流而非抛异常</b>，保证调用方统一流式语义。</li>\n      <li>与 LlmAdapter 分工：Adapter 是单供应商翻译官，Port 是多适配器路由器 + 横切层（兜底/异常归一化/重试）。</li>\n    </ul>"
+    },
+    {
+      "id": "spi",
+      "b": "新增",
+      "t": "LlmAdapter — 适配器 SPI（能力契约）",
+      "f": "domain/…/llm/adapter/LlmAdapter.java · +147 行",
+      "body": "\n    <ul>\n      <li><b>\"插座标准\"</b>：领域层声明 LLM 供应商适配器必须会做什么，基础设施层各自实现插头（依赖倒置落地）。</li>\n      <li>实现方职责 5 项：<code>stream / listModels / resolveModel / providerInfo+providerId / retryPolicy</code>（可选，null 表示不重试）。</li>\n      <li><b>事件顺序契约</b>：<code>BlockStart → *Delta → BlockEnd → (Usage) → Finish</code>；任何失败也要以 Finish(Error) 或 onError 体现，不允许\"无声卡死\"。</li>\n      <li>嵌套 record：<code>LlmProviderInfo / LlmModelInfo / LlmResolvedModelInfo / LlmModelContext / LlmModelReasoning</code>。</li>\n    </ul>"
+    },
+    {
+      "id": "valobj",
+      "b": "新增",
+      "t": "llm 值对象族 — 7 个 valobj",
+      "f": "domain/…/llm/model/valobj/ · 7 个新文件 · 约 566 行",
+      "body": "\n    <ul>\n      <li><b>StreamChunk</b>：8 种流式事件 — BlockStart / TextDelta / ReasoningDelta / ToolCallDelta / BlockEnd / Usage / Finish / Retry（Retry 是端口发给下游的重试通知）。</li>\n      <li><b>GenerateOptions</b>：统一\"生成请求\"record，14 个字段，baseUrl 与 apiKey 支持<b>请求级覆盖</b>全局配置。</li>\n      <li><b>FinishReason</b>：Stop / ToolCalls / MaxTokens / Error 四变体；<b>TokenUsage</b>：input/output/cacheRead/reasoning。</li>\n      <li><b>LlmErrorCodes</b>：AUTH / RATE_LIMIT / INVALID_REQUEST / SERVER / EMPTY_RESPONSE / STREAM_CLOSED / MALFORMED_RESPONSE / UNKNOWN；另有 LlmFailure、LlmCallConfig、ResolvedRetryPolicy。</li>\n    </ul>"
+    },
+    {
+      "id": "svc",
+      "b": "新增",
+      "t": "LlmGenerationService — 流→阻塞翻译官",
+      "f": "domain/…/llm/service/LlmGenerationService.java · +120 行",
+      "body": "\n    <ul>\n      <li><b>解决的问题</b>：端口只给流式接口，但 CLI 等\"问一句答一句\"的场景需要阻塞语义。</li>\n      <li>generate() 三步：① <code>port.stream(options).subscribe(...)</code>，onSubscribe 里 <code>request(Long.MAX_VALUE)</code> 不做背压；② onNext 每条 chunk 喂给 BlockAssembler；③ <code>CompletableFuture.supplyAsync</code> 中 <code>latch.await()</code> 阻塞，结束后 <code>assembler.message(source)</code> 产出 Message。</li>\n      <li><b>线程安全设计</b>：CountDownLatch 建立 happens-before；error 用 AtomicReference 跨线程传递，有异常则异常完成 Future。</li>\n    </ul>"
+    },
+    {
+      "id": "asm",
+      "b": "新增",
+      "t": "BlockAssembler — chunk 拼图手",
+      "f": "domain/…/llm/service/BlockAssembler.java · +235 行",
+      "body": "\n    <ul>\n      <li><b>职责</b>：流式协议把一段回答拆成 BlockStart → *Delta → BlockEnd；本类按块序号归拢增量，最终拼出结构完整的 Message。</li>\n      <li>生命周期：登记（Start/ensure）→ 累积（Delta）→ 冻结（BlockEnd 设置成品块）。</li>\n      <li><b>乱序容忍</b>：Delta 先于 Start 到达时 <code>ensure()</code> 自动补建块；<b>首闭优先</b>：同序号多个 BlockEnd 只认第一个。</li>\n      <li><b>截断保护</b>：finish 为 MaxTokens 时丢弃 tool-call 块——参数 JSON 被截断必然执行失败，宁可不给也不给坏的。</li>\n      <li>tool-call 缺 ID/名称时兜底 <code>call-{index}</code>；message() 生成 UUID 消息 ID 并绑定 provider+model 来源。</li>\n    </ul>"
+    },
+    {
+      "id": "uri",
+      "b": "新增",
+      "t": "OpenAiCompatibleUriResolver — 端点拼接规则",
+      "f": "domain/…/channel/service/OpenAiCompatibleUriResolver.java · +100 行",
+      "body": "\n    <ul>\n      <li><b>为什么放 domain 层</b>：\"渠道地址规范化\"是与厂商无关的业务规则，兼容 OpenAI 协议的适配器都能复用。</li>\n      <li>4 条按序判定规则：① 去掉末尾 <code>/</code>；② 已是完整端点原样返回；③ 地址含版本段（正则 <code>/v\\d+(?:[a-z]+)?(?:/|$)</code>）直接追加 path；④ 兜底补 <code>/v1</code>。</li>\n      <li>本节实际使用：<code>http://127.0.0.1:8777</code> → <code>…/v1/chat/completions</code>；另有 <code>resolveModelsUri()</code> 供后续模型发现使用。</li>\n    </ul>"
+    },
+    {
+      "id": "portimpl",
+      "b": "新增",
+      "t": "InMemoryLlmRuntimePort — 端口实现·路由器",
+      "f": "infrastructure/…/adapter/llm/InMemoryLlmRuntimePort.java · +484 行",
+      "body": "\n    <ul>\n      <li><b>本质</b>：一个 <code>ConcurrentHashMap&lt;provider, LlmAdapter&gt;</code> 路由表 + 横切能力。</li>\n      <li><code>registerAdapter/unregisterAdapter</code> 写入/移除映射；<code>listProviders/listModels/resolveModel</code> 委托给对应适配器。</li>\n      <li><code>stream()</code>：按 provider 取适配器（未注册 → 返回只含 Finish(Error) 的兜底流）→ 读取 <code>retryPolicy()</code> → 有策略时用 <code>retryingStream/runWithRetry</code> 包装，重试期间向下游 publish <b>Retry 事件</b>。</li>\n      <li>支持 <code>setFallbackFactory</code>：provider 未注册时可按工厂兜底创建适配器（后续章节使用）。</li>\n    </ul>"
+    },
+    {
+      "id": "adapter",
+      "b": "新增",
+      "t": "DeepSeekAdapter — OpenAI 兼容适配器总览",
+      "f": "infrastructure/…/llm/deepseek/DeepSeekAdapter.java · +821 行 · 本节最大新类",
+      "body": "\n    <ul>\n      <li><b>LlmAdapter 的第一个真实实现</b>：因为 WaLiAPI / One-API / 绝大多数国产模型都兼容 OpenAI 协议，它实际上是\"通用 OpenAI 兼容适配器\"（直连 WaLiAPI + GLM 零改动即证明）。</li>\n      <li><code>stream()</code>：HTTP+SSE 是阻塞 IO，<b>起独立线程执行 doStream，立即返回 SubmissionPublisher</b>；任何异常经 publishError 以 Finish(Error) 事件发布。</li>\n      <li>常量：MAX_TOKENS=8192、CONTEXT_WINDOW=1M、IDLE_TIMEOUT=300s；请求总超时可用系统属性 <code>harness.llm.request-timeout-seconds</code> 覆盖。</li>\n      <li>模型目录最小版：来自配置，<code>resolveEffectiveModel</code> 请求为空时取目录第一个；多模态、协议路由留给 2-4。</li>\n    </ul>"
+    },
+    {
+      "id": "dostream",
+      "b": "新增",
+      "t": "doStream() — 请求主流程",
+      "f": "DeepSeekAdapter#doStream · stream 调用后的真实执行体",
+      "body": "\n    <ul>\n      <li>① 解析生效配置：apiKey/baseUrl 请求级值优先，空则回落全局配置。</li>\n      <li>② <code>serializeRequest</code> 序列化 → <code>resolveChatCompletionsUri</code> 拼端点 → 构造 POST（json + event-stream + Bearer；sessionId 附 <code>x-deepseek-harness-session-id</code> 头）。</li>\n      <li>③ <code>httpClient.send(..., ofInputStream())</code> 以 InputStream 流式接收响应。</li>\n      <li>④ 非 2xx：读错误体 → <code>extractErrorMessage + httpErrorCode</code> → 抛 LlmAdapterException（最终转 Finish(Error)）。</li>\n      <li>⑤ 2xx：<code>translateSse</code> 逐行翻译；返回 false（空流）时 <code>doNonStreamFallback</code> 降级重发。</li>\n    </ul>"
+    },
+    {
+      "id": "serialize",
+      "b": "新增",
+      "t": "serializeRequest() — 两套结构的翻译规则",
+      "f": "DeepSeekAdapter#serializeRequest · 领域 Message ⇄ OpenAI 扁平消息",
+      "body": "\n    <ul>\n      <li>基础字段：<code>model</code> + <code>stream=true</code>；system 提示词<b>插在消息列表最前</b>。</li>\n      <li>内容块三路翻译：<b>TextBlock → content</b>；<b>ToolCallBlock → tool_calls 数组</b>；<b>ToolResultBlock → role=tool 消息 + tool_call_id</b>。</li>\n      <li>工具 schema（tools 数组）与 temperature / reasoning_effort / max_tokens / stop 按需写入。</li>\n      <li><b>设计要点</b>：领域是\"内容块列表\"，OpenAI 是\"扁平消息+角色\"，角色分发就是适配器最核心的翻译职责。</li>\n    </ul>"
+    },
+    {
+      "id": "sse",
+      "b": "新增",
+      "t": "translateSse() — SSE 逐行翻译（适配器核心）",
+      "f": "DeepSeekAdapter#translateSse · 上游字节流 → 领域事件流",
+      "body": "\n    <ul>\n      <li><b>首字节守门</b>：10 秒无首字节 → 返回 false 触发非流式兜底（防\"接受 stream=true 却永不响应\"的上游）。</li>\n      <li>逐行读 <code>data:</code> 分片，从 <code>choices[].delta</code> 三路提取：reasoning → ReasoningDelta（首片先发 BlockStart）、content → TextDelta、tool_calls → ToolCallDelta（<b>wire index → 块序号映射</b>支持并发多工具调用）。</li>\n      <li><code>finish_reason</code> / <code>usage</code> 暂存 pending，最后统一发布。</li>\n      <li><b>[DONE] 收尾</b>：只有思维链没有正文时合成文本块 → 关闭全部块 → Usage → Finish；Stop 且零块转 Finish(Error)。</li>\n      <li>流断在 [DONE] 前：有数据抛 STREAM_CLOSED；无数据走兜底；坏 JSON 抛 MALFORMED_RESPONSE。</li>\n    </ul>"
+    },
+    {
+      "id": "fallback",
+      "b": "新增",
+      "t": "doNonStreamFallback() — 非流式兜底",
+      "f": "DeepSeekAdapter#doNonStreamFallback · 空流降级路径",
+      "body": "\n    <ul>\n      <li><b>触发条件</b>：上游接受 stream=true 但 10 秒无首字节 / 整个流没有 data 分片。</li>\n      <li>改发 <code>stream=false</code> 的普通 POST，一次性拿完整响应。</li>\n      <li>把 <code>choices[0].message</code> 的 content / reasoning_content <b>拆成与流式完全同构的事件序列</b>发布，下游无需感知\"这是兜底来的\"。</li>\n      <li>无 choices / 无内容分别抛 EMPTY_RESPONSE。</li>\n    </ul>"
+    },
+    {
+      "id": "err",
+      "b": "新增",
+      "t": "错误归一化链 — publishError 家族",
+      "f": "DeepSeekAdapter#publishError / httpErrorCode / mapFinishReason / mapUsage",
+      "body": "\n    <ul>\n      <li><b>httpErrorCode</b>：401/403→AUTH（不可重试）、429→RATE_LIMIT（可重试）、400→INVALID_REQUEST、5xx→SERVER，其余保留 HTTP_{status}——映射依据是\"重试策略能否据此决策\"。</li>\n      <li><b>extractErrorMessage</b>：按 OpenAI 错误格式取 <code>error.message</code>，失败原样返回响应体保证诊断信息不丢。</li>\n      <li><b>publishError</b>：LlmAdapterException 保留结构化 code/status，其他统一 UNKNOWN；最终都以 <code>Finish(Error)</code> 事件发布。</li>\n      <li><b>mapFinishReason</b>：stop→Stop、tool_calls→ToolCalls、length→MaxTokens；<b>mapUsage</b>：兼容两种缓存命中字段并从 inputTokens 剔除（缓存不重复计费）。</li>\n    </ul>"
+    },
+    {
+      "id": "opts",
+      "b": "新增",
+      "t": "DeepSeekAdapterOptions / DirectSeekCatalogModel",
+      "f": "infrastructure/…/llm/deepseek/ · +65 / +66 行",
+      "body": "\n    <ul>\n      <li><b>DeepSeekAdapterOptions</b>：渠道配置 record（baseUrl / apiKey / maxTokens / contextWindow / idleTimeout / 模型目录 / retryPolicy），构造后不可变。</li>\n      <li><b>DirectSeekCatalogModel</b>：模型目录条目——最小版不做上游发现，<b>直接把要用的模型写进配置</b>。</li>\n      <li>换厂商 = 换 baseUrl/apiKey/model 三个字符串，适配器代码一行不改。</li>\n    </ul>"
+    },
+    {
+      "id": "tests",
+      "b": "测试",
+      "t": "两个单元测试",
+      "f": "infrastructure/src/test/java/… · +184 / +100 行",
+      "body": "\n    <ul>\n      <li><b>InMemoryLlmRuntimePortTest</b>：路由注册/注销、未注册兜底流、重试包装与 Retry 事件。</li>\n      <li><b>DeepSeekAdapterMinimalTest</b>：serializeRequest 请求体结构、SSE 翻译事件顺序冒烟。</li>\n    </ul>"
+    },
+    {
+      "id": "dep",
+      "b": "调整",
+      "t": "pom.xml ×2 — 依赖调整",
+      "f": "domain/pom.xml · infrastructure/pom.xml · 各 +13 行",
+      "body": "\n    <ul>\n      <li>两模块同步新增：<code>spring-context</code>、<code>jackson-databind</code>（请求体序列化 + SSE 解析）、<code>junit-jupiter</code>（test）。</li>\n      <li>domain 新增依赖仍保持\"不依赖 infrastructure\"的分层约束。</li>\n    </ul>"
+    },
+    {
+      "id": "app-comment",
+      "b": "调整",
+      "t": "Application / ConfigProbeRunner — 仅注释增强",
+      "f": "app/…/（无逻辑改动 · +20/-1）",
+      "body": "\n    <ul>\n      <li><b>本节唯一\"非新增\"的代码改动</b>：只增强 Javadoc，无任何逻辑变更。</li>\n      <li>Application：补充 7 模块分层依赖说明、main() 完整\"运行距离\"（JVM → Spring 容器 → Tomcat 8090 → ReadyEvent）。</li>\n      <li>ConfigProbeRunner：补充 <code>&lt;unset&gt;</code> 占位符设计细节（区分\"配了但为空\"与\"没配\"）。</li>\n      <li>统计中的 <b>-1 行</b>即来自被改写的一行旧注释。</li>\n    </ul>"
+    },
+    {
+      "id": "baseline",
+      "b": "复用",
+      "t": "1-3 基线复用 — 本节不动的部分",
+      "f": "domain/…/domain.model/ 与 api / spi 包 · xfg-1-3 已交付",
+      "body": "\n    <ul>\n      <li><b>领域模型族</b>：<code>Message / MessageSource / ContentBlock / TextBlock / ReasoningBlock / ToolCallBlock / ToolResultBlock</code> 等直接被本节消费——BlockAssembler 的产出与 serializeRequest 的输入都是它们。</li>\n      <li><b>api 契约层</b>（23 个 IXxxApi + DTO）与<b>插件 SPI</b>（1-2 交付）保持原样。</li>\n      <li>本节的 <code>domain.llm.*</code> 是全新命名空间，与 1-3 的 <code>domain.model.llm.LlmChatClient</code>（旧探索代码）并存，后续章节收敛。</li>\n    </ul>"
+    }
+  ],
+  "tour": [
+    {
+      "tab": "over",
+      "tree": null,
+      "sl": "全景鸟瞰",
+      "title": "第 1 站 · 全景鸟瞰",
+      "text": "这是本节的地图：app（验收入口）→ domain（纯领域，零基础设施依赖）→ infrastructure（厂商适配）三层。绿色 = 本节新增，灰色虚线 = 1-3 基线复用。点击图中任意模块即可直达。"
+    },
+    {
+      "tab": "over",
+      "tree": "LlmCliProbe",
+      "sl": "装配起点",
+      "title": "第 2 站 · 装配起点",
+      "text": "LlmCliProbe.main() 是本节唯一可跑入口：new InMemoryLlmRuntimePort → 注册 deepseek 适配器 → new LlmGenerationService。纯手工装配，后续章节换 Spring。"
+    },
+    {
+      "tab": "over",
+      "tree": "ILlmRuntimePort",
+      "sl": "领域端口",
+      "title": "第 3 站 · 领域端口（六边形架构核心）",
+      "text": "ILlmRuntimePort 是领域层唯一的\"插座\"：按 provider 路由适配器，返回 Flow.Publisher&lt;StreamChunk&gt;。路由失败也返回含 Finish(Error) 的流，不抛异常——统一流式语义。"
+    },
+    {
+      "tab": "seq",
+      "tree": "LlmGenerationService",
+      "sl": "流→阻塞",
+      "title": "第 4 站 · 流→阻塞翻译官",
+      "text": "切到时序图：generate() 订阅流式事件 + CountDownLatch + CompletableFuture，把\"流\"翻译成 CLI 需要的\"一问一答\"。注意②号阶段的完整消息流。"
+    },
+    {
+      "tab": "flow",
+      "tree": "DeepSeekAdapter",
+      "sl": "适配器总览",
+      "title": "第 5 站 · 适配器总览",
+      "text": "切到流程图：DeepSeekAdapter（821 行，本节最大新类）是 OpenAI 兼容通用适配器——起独立线程执行 doStream，立即返回 Publisher。"
+    },
+    {
+      "tab": "flow",
+      "tree": "translateSse",
+      "sl": "SSE 核心",
+      "title": "第 6 站 · SSE 翻译核心",
+      "text": "translateSse() 是适配器的心脏：上游 SSE 字节流 → 领域事件流。看主链路上的三个分支：HTTP 非 2xx、首字节 10s 超时、正常 [DONE] 收尾。"
+    },
+    {
+      "tab": "flow",
+      "tree": "doNonStreamFallback",
+      "sl": "兜底与错误",
+      "title": "第 7 站 · 兜底与错误归一化",
+      "text": "空流降级 doNonStreamFallback（改发 stream=false）；任何异常经 publishError → Finish(Error)，错误码归一化（401→AUTH、429→RATE_LIMIT…），让重试策略可决策。"
+    },
+    {
+      "tab": "seq",
+      "tree": "BlockAssembler",
+      "sl": "chunk 组装",
+      "title": "第 8 站 · chunk 组装完成",
+      "text": "回到时序图底部：BlockAssembler 把 BlockStart→*Delta→BlockEnd 拼成完整 Message——乱序容忍、首闭优先、截断保护。至此一条链走完，Future join() 拿到答案。"
+    },
+    {
+      "tab": "over",
+      "tree": null,
+      "sl": "自由探索",
+      "title": "🎉 导览完成",
+      "text": "现在自由探索：左侧树 / 中间图 / 右侧说明卡，点击任何一处都会三方联动并画出连线。导览随时可以从顶栏「🧭 跟流程走一遍」重新开始。"
+    }
+  ]
+}
