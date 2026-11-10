@@ -184,6 +184,8 @@
     white-space: nowrap; font-family: var(--mono); }
   .zbtn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   .zsep { width: 1px; height: 16px; background: var(--border); margin: 0 3px; }
+  .zval { min-width: 40px; text-align: right; font-family: var(--mono); font-size: 10.5px;
+    color: var(--text-3); font-variant-numeric: tabular-nums; }
 
   /* 主线导航条 */
   .rail { display: flex; align-items: center; gap: 10px; padding: 7px 14px; flex: none;
@@ -219,8 +221,12 @@
 
   .diagram-wrap { flex: 1; overflow: auto; padding: 22px 24px 44px; display: none;
     background-image: radial-gradient(var(--border-2) 1px, transparent 1px);
-    background-size: 22px 22px; }
+    background-size: 22px 22px; cursor: grab; }
   .diagram-wrap.on { display: block; }
+  .diagram-wrap.panning { cursor: grabbing; user-select: none; }
+  .diagram-wrap.panning * { cursor: grabbing !important; }
+  .diagram-wrap details.src { cursor: auto; }
+  .diagram-wrap details.src pre { cursor: text; }
   .mermaid-box { background: var(--panel); border: 1px solid var(--border);
     border-radius: 12px; padding: 26px; min-width: fit-content;
     box-shadow: var(--shadow-md); position: relative; }
@@ -411,6 +417,7 @@
         <div class="zsep"></div>
         <button class="zbtn" data-z="in" title="放大">＋</button>
         <button class="zbtn" data-z="out" title="缩小">－</button>
+        <span class="zval" id="zoomVal" title="当前缩放比例（滚轮可连续缩放）">100%</span>
       </div>
     </div>
     <div class="rail">
@@ -424,7 +431,7 @@
       <i><span class="dot" style="background:#eaf1fe;border:1.5px solid #3574f0"></span>外部网关</i>
       <i><span class="dot" style="background:#fff4e0;border:1.5px solid #e6a23c"></span>异常 / 兜底</i>
       <i><span class="dot" style="background:#fff0e6;border:1.5px solid #f0842c"></span>联动目标</i>
-      <span class="lg-esc">点击树 / 图 / 说明卡任意一处，三方联动</span>
+      <span class="lg-esc">按住拖拽平移 · 滚轮缩放（Shift+滚轮 滚动） · 点击任意一处三方联动</span>
     </div>
     <div class="diagram-wrap on" id="wrap-over">
       <div class="mermaid-box" id="box-over">
@@ -1309,7 +1316,8 @@ function indexRows() {
   });
 }
 
-/* ══════════════ 图缩放：自然尺寸渲染 + 适配面板 ══════════════ */
+/* ══════════════ 图缩放 / 平移：自然尺寸渲染 + 适配 + 拖拽 + 滚轮 ══════════════ */
+const ZOOM_MIN = 0.35, ZOOM_MAX = 2.5;
 const zoom = Object.fromEntries(TABS.map(t => [t, { fit: true, scale: 1 }]));
 function naturalSize(tab) {
   const svg = document.getElementById('box-' + tab).querySelector('svg');
@@ -1328,33 +1336,119 @@ function naturalSize(tab) {
   }
   return { svg, w, h };
 }
+function fitScale(tab, ns) {
+  const wrap = document.getElementById('wrap-' + tab);
+  /* 用 border-box 宽度而非 clientWidth：滚动条出现/消失时适配比例不抖动 */
+  const avail = Math.max(240, wrap.getBoundingClientRect().width - 74);
+  return Math.min(1, avail / ns.w);
+}
+function currentScale(tab) {
+  const ns = naturalSize(tab);
+  if (!ns) return 1;
+  return zoom[tab].fit ? fitScale(tab, ns) : zoom[tab].scale;
+}
 function applyZoom(tab) {
   const ns = naturalSize(tab);
   if (!ns) return;
-  const wrap = document.getElementById('wrap-' + tab);
-  const avail = Math.max(240, wrap.clientWidth - 74);
-  let scale;
-  if (zoom[tab].fit) scale = Math.min(1, avail / ns.w);
-  else scale = zoom[tab].scale;
+  const scale = zoom[tab].fit ? fitScale(tab, ns) : zoom[tab].scale;
   zoom[tab].scale = scale;
   ns.svg.setAttribute('preserveAspectRatio', 'xMidYMin meet');
   ns.svg.style.width = (ns.w * scale) + 'px';
   ns.svg.style.height = (ns.h * scale) + 'px';
+  const lab = document.getElementById('zoomVal');
+  const cur = document.querySelector('.tab.on');
+  if (lab && cur && cur.dataset.tab === tab) lab.textContent = Math.round(scale * 100) + '%';
+}
+/* 以视口坐标 anchor 为锚点缩放：缩放前后光标/中心点下的图内容保持不动 */
+function setScale(tab, scale, anchor) {
+  const ns = naturalSize(tab);
+  if (!ns) return;
+  const wrap = document.getElementById('wrap-' + tab);
+  const before = ns.svg.getBoundingClientRect();
+  const ax = anchor && before.width ? (anchor.x - before.left) / before.width : 0;
+  const ay = anchor && before.height ? (anchor.y - before.top) / before.height : 0;
+  /* 下限取「绝对下限」与「适配比例」的较小值：大图也能用滚轮退回全貌 */
+  const fit = fitScale(tab, ns);
+  const lower = Math.min(ZOOM_MIN, fit);
+  const next = Math.min(ZOOM_MAX, Math.max(lower, scale));
+  /* 大图缩到底时直接切回适配模式，避免滚动条宽度引起的比例漂移 */
+  if (fit < ZOOM_MIN && next <= lower + 0.0005) zoom[tab].fit = true;
+  else { zoom[tab].fit = false; zoom[tab].scale = next; }
+  applyZoom(tab);
+  if (anchor) {
+    const after = ns.svg.getBoundingClientRect();
+    wrap.scrollLeft += (after.left + ax * after.width) - anchor.x;
+    wrap.scrollTop += (after.top + ay * after.height) - anchor.y;
+  }
+  requestAnimationFrame(() => { if (activeTree) drawLinks(); });
+}
+function centerAnchor(tab) {
+  const r = document.getElementById('wrap-' + tab).getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 document.querySelectorAll('.zbtn').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = document.querySelector('.tab.on').dataset.tab;
     const z = btn.dataset.z;
-    if (z === 'fit') zoom[tab].fit = true;
-    else {
-      zoom[tab].fit = false;
-      if (z === '100') zoom[tab].scale = 1;
-      else if (z === 'in') zoom[tab].scale = Math.min(2.5, zoom[tab].scale * 1.25);
-      else if (z === 'out') zoom[tab].scale = Math.max(0.35, zoom[tab].scale / 1.25);
-    }
-    applyZoom(tab);
-    requestAnimationFrame(() => { if (activeTree) drawLinks(); });
+    if (z === 'fit') {
+      zoom[tab].fit = true;
+      applyZoom(tab);
+      requestAnimationFrame(() => { if (activeTree) drawLinks(); });
+    } else if (z === '100') setScale(tab, 1, centerAnchor(tab));
+    else if (z === 'in') setScale(tab, currentScale(tab) * 1.25, centerAnchor(tab));
+    else if (z === 'out') setScale(tab, currentScale(tab) / 1.25, centerAnchor(tab));
   });
+});
+
+/* 滚轮缩放：以光标为锚点做指数步进；按住 Shift/Alt 时保留原生滚动，源码区始终原生滚动 */
+document.querySelectorAll('.diagram-wrap').forEach(wrap => {
+  const tab = wrap.id.slice('wrap-'.length);
+  wrap.addEventListener('wheel', e => {
+    if (e.shiftKey || e.altKey) return;
+    if (e.target.closest && e.target.closest('details.src')) return;
+    if (!naturalSize(tab)) return;
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? wrap.clientHeight : 1;
+    const step = Math.min(1.6, Math.max(0.6, Math.exp(-e.deltaY * unit * 0.0015)));
+    setScale(tab, currentScale(tab) * step, { x: e.clientX, y: e.clientY });
+  }, { passive: false });
+
+  /* 左键按住拖拽平移：位移超过 4px 才判定为拖拽，避免吞掉图节点的点击联动 */
+  let dragging = false, moved = false, suppressClick = false;
+  let sx = 0, sy = 0, sl = 0, st = 0;
+  wrap.addEventListener('click', e => {
+    if (!suppressClick) return;
+    e.preventDefault(); e.stopPropagation(); suppressClick = false;
+  }, true);
+  wrap.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('details.src'))) return;
+    dragging = true; moved = false; suppressClick = false;
+    sx = e.clientX; sy = e.clientY;
+    sl = wrap.scrollLeft; st = wrap.scrollTop;
+  });
+  window.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+    if (!moved) {
+      moved = true;
+      wrap.classList.add('panning');
+      const sel = window.getSelection();
+      if (sel) sel.removeAllRanges();
+    }
+    wrap.scrollLeft = sl - dx;
+    wrap.scrollTop = st - dy;
+  });
+  const endPan = () => {
+    if (!dragging) return;
+    dragging = false;
+    wrap.classList.remove('panning');
+    /* 不设超时清除：由紧随其后的 click 消费，或由下一次 pointerdown 重置，
+       避免浏览器延迟派发 click 时抑制失效、导致拖拽结束误触发节点联动 */
+    if (moved) suppressClick = true;
+  };
+  window.addEventListener('pointerup', endPan);
+  window.addEventListener('pointercancel', endPan);
 });
 
 /* ══════════════ 标签切换 / 事件 ══════════════ */
